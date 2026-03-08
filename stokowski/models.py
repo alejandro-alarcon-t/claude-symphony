@@ -46,6 +46,7 @@ class RunAttempt:
     last_event_at: datetime | None = None
     last_event: str | None = None
     last_message: str = ""
+    completed_at: datetime | None = None
 
 
 @dataclass
