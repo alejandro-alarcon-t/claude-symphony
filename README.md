@@ -51,42 +51,20 @@ A Python implementation of the [OpenAI Symphony](https://github.com/openai/symph
 
 You write a ticket in Linear. You move it to **Todo**. That's it — Stokowski handles everything else:
 
-```
-You move ticket to Todo
-        │
-        ▼
-Stokowski picks it up, clones your repo into an isolated workspace
-        │
-        ▼
-Claude Code reads your codebase, CLAUDE.md, and ticket description
-        │
-        ▼
-Agent implements the feature — writes code, runs tests, fixes type errors
-        │
-        ▼
-Agent opens a Pull Request on GitHub with a full description
-        │
-        ▼
-Agent moves the ticket to Human Review, posts a planning + completion comment on the issue
-        │
-        ▼
-You review the PR — approve it or request changes
-        │
-   ┌────┴─────┐
-approved    changes requested
-   │              │
-   ▼              ▼
-You move       You (or a bot) move ticket to Rework
-to Merging          │
-   │           Agent reads all new PR comments (CI, bots, reviewers)
-   │           since its last run, addresses feedback, updates PR
-   │                │
-   ▼                ▼
-Agent merges   Back to Human Review
-the PR
-   │
-   ▼
-Done ✓
+```mermaid
+flowchart TD
+    A([You move ticket to Todo]) --> B[Stokowski picks it up\nclones repo into isolated workspace]
+    B --> C[Claude Code reads codebase\nCLAUDE.md and ticket description]
+    C --> D[Agent implements the feature\nwrites code · runs tests · fixes errors]
+    D --> E[Agent opens a Pull Request\nand moves ticket to Human Review]
+    E --> F([You review the PR])
+    F -->|approved| G[You move ticket to Merging]
+    F -->|changes requested| H[You move ticket to Rework]
+    H --> I[Agent reads new PR comments\nCI · bots · reviewers]
+    I --> J[Agent addresses feedback\nupdates PR]
+    J --> E
+    G --> K[Agent merges the PR]
+    K --> L([Done ✓])
 ```
 
 Each agent runs in its own isolated git clone — multiple tickets can be worked in parallel without conflicts. Token usage, turn count, and last activity are tracked live in the terminal and web dashboard.
@@ -347,20 +325,14 @@ Stokowski uses a specific set of states to manage the agent ↔ human handoff. L
 
 **The full lifecycle:**
 
-```
-Todo
- └─▶ [Agent] In Progress  →  Human Review
-                                   │
-                    ┌──────────────┴──────────────┐
-               approved                    changes requested
-                    │                             │
-                    ▼                             ▼
-                Merging                        Rework
-                    │                             │
-             [Agent] merges              [Agent] fixes, back to
-                    │                        Human Review
-                    ▼
-                  Done
+```mermaid
+flowchart LR
+    Todo -->|agent picks up| IP[In Progress]
+    IP --> HR[Human Review]
+    HR -->|approved| M[Merging]
+    HR -->|changes requested| R[Rework]
+    R -->|agent fixes| HR
+    M -->|agent merges| Done
 ```
 
 ---
