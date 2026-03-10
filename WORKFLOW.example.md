@@ -13,6 +13,10 @@ tracker:
     - Cancelled
     - Canceled
     - Duplicate
+  # Gate states (only needed with pipeline mode):
+  # gate_states: [Awaiting Gate]
+  # gate_approved_state: Gate Approved
+  # rework_state: Rework
 
 polling:
   interval_ms: 15000
@@ -39,6 +43,24 @@ claude:
 
 agent:
   max_concurrent_agents: 3
+
+# Pipeline configuration (optional - omit for legacy single-prompt mode)
+# When present, stages/ directory must contain a .md file per stage.
+# pipeline:
+#   stages:
+#     - investigate
+#     - implement
+#     - gate:post-implement
+#     - review
+#     - gate:post-review
+#     - merge
+#   gates:
+#     post-implement:
+#       rework_to: implement
+#       prompt: "Implementation complete. Ready for human review."
+#     post-review:
+#       rework_to: implement
+#       prompt: "Code review complete. Ready for human approval."
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}`.
