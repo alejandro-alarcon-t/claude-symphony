@@ -535,10 +535,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       ...(data.gates || []).map(g => ({
         issue_identifier: g.issue_identifier,
         status: 'gate',
-        stage: g.gate_name,
-        turn_count: g.pipeline_run,
+        state_name: g.gate_state,
+        turn_count: g.run,
         tokens: { total_tokens: 0 },
-        last_message: 'Awaiting human gate approval',
+        last_message: 'Awaiting human review',
         session_id: null,
       })),
     ];
@@ -555,16 +555,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     const rows = all.map(r => {
-      const stageInfo = r.stage ? `<span style="color:var(--muted);font-size:11px;margin-left:8px">${esc(r.stage)}</span>` : '';
-      const runnerInfo = r.runner_type && r.runner_type !== 'claude' ? `<span style="color:var(--blue);font-size:10px;margin-left:6px;text-transform:uppercase">${esc(r.runner_type)}</span>` : '';
+      const stateInfo = r.state_name ? `<span style="color:var(--muted);font-size:11px;margin-left:8px">${esc(r.state_name)}</span>` : '';
       return `
       <div class="agent-card">
         <div>
-          <div class="agent-id">${esc(r.issue_identifier)}${runnerInfo}</div>
+          <div class="agent-id">${esc(r.issue_identifier)}</div>
         </div>
         <div>
           <div class="agent-status-row">
-            ${statusPill(r.status)}${stageInfo}
+            ${statusPill(r.status)}${stateInfo}
           </div>
           <div class="agent-msg">${esc(r.last_message || '—')}</div>
         </div>
