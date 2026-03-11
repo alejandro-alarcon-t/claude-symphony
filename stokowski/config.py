@@ -48,6 +48,7 @@ class HooksConfig:
     before_run: str | None = None
     after_run: str | None = None
     before_remove: str | None = None
+    on_stage_enter: str | None = None
     timeout_ms: int = 60_000
 
 
@@ -180,8 +181,24 @@ def parse_stage_file(path: Path) -> StageConfig:
             before_run=h.get("before_run"),
             after_run=h.get("after_run"),
             before_remove=h.get("before_remove"),
+            on_stage_enter=h.get("on_stage_enter"),
             timeout_ms=_coerce_int(h.get("timeout_ms"), 60_000),
         )
+
+    # on_stage_enter can be top-level or under hooks
+    on_stage_enter = config_raw.get("on_stage_enter")
+    if on_stage_enter and not (hooks and hooks.on_stage_enter):
+        if hooks is None:
+            hooks = HooksConfig(on_stage_enter=on_stage_enter)
+        else:
+            hooks = HooksConfig(
+                after_create=hooks.after_create,
+                before_run=hooks.before_run,
+                after_run=hooks.after_run,
+                before_remove=hooks.before_remove,
+                on_stage_enter=on_stage_enter,
+                timeout_ms=hooks.timeout_ms,
+            )
 
     allowed = config_raw.get("allowed_tools")
 

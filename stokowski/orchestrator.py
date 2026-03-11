@@ -632,6 +632,23 @@ class Orchestrator:
                     )
                     await client.post_comment(issue.id, comment)
 
+            # Run on_stage_enter hook if defined
+            if self.cfg.pipeline and attempt.stage:
+                stage_cfg = self._stage_configs.get(attempt.stage)
+                if stage_cfg and stage_cfg.hooks and stage_cfg.hooks.on_stage_enter:
+                    from .workspace import run_hook
+                    ok = await run_hook(
+                        stage_cfg.hooks.on_stage_enter,
+                        ws.path,
+                        (stage_cfg.hooks.timeout_ms if stage_cfg.hooks else self.cfg.hooks.timeout_ms),
+                        f"on_stage_enter:{attempt.stage}",
+                    )
+                    if not ok:
+                        attempt.status = "failed"
+                        attempt.error = f"on_stage_enter hook failed for stage {attempt.stage}"
+                        self._on_worker_exit(issue, attempt)
+                        return
+
             prompt = self._render_prompt(issue, attempt.attempt, attempt.stage)
 
             max_turns = claude_cfg.max_turns
@@ -964,6 +981,7 @@ class Orchestrator:
             "counts": {
                 "running": len(self.running),
                 "retrying": len(self.retry_attempts),
+                "gates": len(self._pending_gates),
             },
             "running": [
                 {
@@ -996,6 +1014,15 @@ class Orchestrator:
                     "error": e.error,
                 }
                 for e in self.retry_attempts.values()
+            ],
+            "gates": [
+                {
+                    "issue_id": issue_id,
+                    "issue_identifier": self._last_issues.get(issue_id, Issue(id="", identifier=issue_id, title="")).identifier,
+                    "gate_name": gate_name,
+                    "pipeline_run": self._issue_pipeline_runs.get(issue_id, 1),
+                }
+                for issue_id, gate_name in self._pending_gates.items()
             ],
             "totals": {
                 "input_tokens": self.total_input_tokens,
