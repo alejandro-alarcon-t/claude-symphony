@@ -54,17 +54,17 @@ You write a ticket in Linear. You move it to **Todo**. That's it — Stokowski h
 ```mermaid
 flowchart TD
     A([You move ticket to Todo]) --> B["Stokowski picks it up<br/>clones repo into isolated workspace"]
-    B --> C["Claude Code reads codebase<br/>CLAUDE.md and ticket description"]
-    C --> D["Agent implements the feature<br/>writes code · runs tests · fixes errors"]
-    D --> E["Agent opens a Pull Request<br/>and moves ticket to Human Review"]
-    E --> F([You review the PR])
-    F -->|approved| G[You move ticket to Merging]
-    F -->|changes requested| H[You move ticket to Rework]
-    H --> I["Agent reads new PR comments<br/>CI · bots · reviewers"]
-    I --> J["Agent addresses feedback<br/>updates PR"]
-    J --> E
-    G --> K[Agent merges the PR]
-    K --> L([Done ✓])
+    B --> C["Agent investigates the issue<br/>reads codebase, posts findings"]
+    C --> D([You review the investigation])
+    D -->|approved| E["Agent implements the solution<br/>writes code, runs tests, opens PR"]
+    D -->|rework| C
+    E --> F([You review the implementation])
+    F -->|approved| G["Independent code review<br/>fresh session, adversarial"]
+    F -->|rework| E
+    G --> H([You review before merge])
+    H -->|approved| I[Agent merges the PR]
+    H -->|rework| E
+    I --> J([Done])
 ```
 
 Each agent runs in its own isolated git clone — multiple tickets can be worked in parallel without conflicts. Token usage, turn count, and last activity are tracked live in the terminal and web dashboard.
@@ -79,12 +79,13 @@ Each agent runs in its own isolated git clone — multiple tickets can be worked
 
 When you work interactively with Claude Code in your repo, you rely on `CLAUDE.md` and your project's rule files to guide Claude's behaviour. The problem with putting your autonomous agent instructions in `CLAUDE.md` is that they bleed into your regular Claude Code sessions — your day-to-day interactive work now carries all the "you are running headlessly, never ask a human, follow this state machine" instructions that only make sense for an unattended agent.
 
-Stokowski solves this with `WORKFLOW.md`. Your autonomous agent prompt — how to handle Linear states, what quality gates to run, how to structure PRs, what to do when blocked — lives entirely in `WORKFLOW.md` and is only injected into headless agent sessions. Your `CLAUDE.md` stays clean for interactive use.
+Stokowski solves this with `workflow.yaml` and a `prompts/` directory. Your autonomous agent prompt — how to handle Linear states, what quality gates to run, how to structure PRs, what to do when blocked — lives entirely in your workflow config and is only injected into headless agent sessions. Your `CLAUDE.md` stays clean for interactive use.
 
 ```
-Interactive session:    Claude reads CLAUDE.md        ← your normal instructions
-Stokowski agent:        Claude reads CLAUDE.md         ← same conventions
-                              +  WORKFLOW.md prompt    ← agent-only instructions
+Interactive session:    Claude reads CLAUDE.md              ← your normal instructions
+Stokowski agent:        Claude reads CLAUDE.md               ← same conventions
+                              +  workflow.yaml config        ← state machine + dispatch
+                              +  prompts/ stage files        ← agent-only instructions
 ```
 
 This separation lets you build a genuinely autonomous pipeline without compromising your day-to-day developer experience.
@@ -93,8 +94,8 @@ This separation lets you build a genuinely autonomous pipeline without compromis
 
 | | Stokowski | Emdash |
 |---|---|---|
-| Agent instructions | Separate `WORKFLOW.md` — doesn't affect interactive sessions | Applied via project rules, shared with interactive context |
-| Prompt template | Full Jinja2 template with complete issue context | Managed by Emdash |
+| Agent instructions | Separate `workflow.yaml` + `prompts/` — doesn't affect interactive sessions | Applied via project rules, shared with interactive context |
+| Prompt template | Three-layer Jinja2 prompt assembly with full issue context | Managed by Emdash |
 | Quality gate hooks | `before_run` / `after_run` shell scripts per turn | Not available |
 | MCP servers | Any `.mcp.json` in your repo — Figma, iOS Simulator, Playwright, etc. | Emdash-managed integrations |
 | Per-state concurrency | Configurable per Linear state | Not available |
@@ -133,15 +134,16 @@ Linear issue → isolated git clone → claude -p → PR + Human Review → merg
 
 ## Features
 
+- **Configurable state machine** — define agent stages, human gates, and transitions in `workflow.yaml`; issues flow through your pipeline automatically
+- **Three-layer prompt assembly** — global prompt + per-stage prompt + auto-injected lifecycle context; each layer is a Jinja2 template with full issue variables
 - **Linear-driven dispatch** — polls for issues in configured states, dispatches agents with bounded concurrency
 - **Session continuity** — multi-turn Claude Code sessions via `--resume`; agents pick up where they left off
 - **Isolated workspaces** — per-issue git clones so parallel agents never conflict
-- **Lifecycle hooks** — `after_create`, `before_run`, `after_run`, `before_remove` shell scripts for setup, quality gates, and cleanup
+- **Lifecycle hooks** — `after_create`, `before_run`, `after_run`, `before_remove`, `on_stage_enter` shell scripts for setup, quality gates, and cleanup
 - **Retry with backoff** — failed turns retry automatically with exponential backoff
 - **State reconciliation** — running agents are stopped if their Linear issue moves to a terminal state mid-run
 - **Web dashboard** — live view of agent status, token usage, and last activity at `localhost:<port>`
 - **MCP-aware** — agents inherit `.mcp.json` from the workspace (Figma, Linear, iOS Simulator, Playwright, etc.)
-- **Jinja2 prompt templates** — full issue context available in the agent prompt
 - **Persistent terminal UI** — live status bar, single-key controls (`q` quit · `s` status · `r` refresh · `h` help)
 
 ---
@@ -185,7 +187,7 @@ Beyond porting to Claude Code + Python, Stokowski ships several improvements ove
 
 - **`.env` auto-load** — `LINEAR_API_KEY` loaded from `.env` on startup, no `export` needed
 - **`$VAR` references** — any config value can reference an env var with `$VAR_NAME` syntax
-- **Hot-reload** — `WORKFLOW.md` is re-parsed on every poll tick; config changes take effect without restart
+- **Hot-reload** — `workflow.yaml` is re-parsed on every poll tick; config changes take effect without restart
 - **Per-state concurrency limits** — cap concurrency per Linear state independently of the global limit
 
 </details>
@@ -306,10 +308,10 @@ Stokowski uses a specific set of states to manage the agent ↔ human handoff. L
 | State | Set by | Meaning |
 |-------|--------|---------|
 | `Todo` | Human | Ready for an agent to pick up |
-| `In Progress` | Agent | Actively working |
-| `Human Review` | Agent | PR opened, waiting for approval |
-| `Rework` | Human or bot | Changes requested — agent reads new PR comments and picks up again |
-| `Merging` | Human | PR approved — agent will merge |
+| `In Progress` | Agent | Actively working on the current stage |
+| `Human Review` | Agent | Waiting for human approval at a gate |
+| `Gate Approved` | Human | Gate passed — agent picks up next stage |
+| `Rework` | Human | Changes requested — agent re-enters the previous stage |
 | `Done` | Auto | Complete (via GitHub integration) |
 | `Cancelled` | Human | Abandoned |
 
@@ -318,10 +320,10 @@ Stokowski uses a specific set of states to manage the agent ↔ human handoff. L
 1. Linear → **Settings** → **Teams** → your team → **Workflow**
 2. Under **In Progress**, add:
    - `Human Review` · colour `#4ea7fc` (blue)
+   - `Gate Approved` · colour `#22c55e` (green)
    - `Rework` · colour `#eb5757` (red)
-   - `Merging` · colour `#e2b714` (amber)
 
-> **Note:** State names are case-sensitive and must exactly match the `active_states` list in your `WORKFLOW.md`.
+> **Note:** State names are case-sensitive and must exactly match the `linear_states` mappings in your `workflow.yaml`.
 
 **The full lifecycle:**
 
@@ -329,10 +331,11 @@ Stokowski uses a specific set of states to manage the agent ↔ human handoff. L
 flowchart LR
     Todo -->|agent picks up| IP[In Progress]
     IP --> HR[Human Review]
-    HR -->|approved| M[Merging]
-    HR -->|changes requested| R[Rework]
-    R -->|agent fixes| HR
-    M -->|agent merges| Done
+    HR -->|approved| GA[Gate Approved]
+    HR -->|rework| R[Rework]
+    GA -->|agent picks up| IP
+    R -->|agent fixes| IP
+    IP -->|pipeline complete| Done
 ```
 
 ---
@@ -340,10 +343,10 @@ flowchart LR
 ### 6. Configure your workflow
 
 ```bash
-cp WORKFLOW.example.md WORKFLOW.md
+cp workflow.example.yaml workflow.yaml
 ```
 
-Open `WORKFLOW.md` and update these fields:
+Open `workflow.yaml` and update these fields:
 
 **`tracker.project_slug`** — the hex ID at the end of your Linear project URL:
 
@@ -361,11 +364,11 @@ hooks:
     git clone --depth 1 git@github.com:your-org/your-repo.git .
 ```
 
-**`tracker.active_states`** — must exactly match your Linear state names (case-sensitive).
+**`states`** — define your pipeline stages and gates. Each state has a `prompt` file in `prompts/`.
 
 **`agent.max_concurrent_agents`** — start with `1` or `2` while getting familiar.
 
-`WORKFLOW.md` is gitignored — your config stays local.
+`workflow.yaml` is gitignored — your config stays local. Create your prompt files in `prompts/` (also gitignored).
 
 ---
 
@@ -383,9 +386,9 @@ This connects to Linear, validates your config, and lists candidate issues — *
 | Error | Fix |
 |-------|-----|
 | `Missing tracker API key` | Check `LINEAR_API_KEY` is in `.env` |
-| `Missing tracker.project_slug` | Set `project_slug` in `WORKFLOW.md` |
+| `Missing tracker.project_slug` | Set `project_slug` in `workflow.yaml` |
 | `Failed to fetch candidates` | Check your API key has access to the project |
-| No issues listed | Check `active_states` matches your Linear state names exactly |
+| No issues listed | Check `linear_states` matches your Linear state names exactly |
 
 ---
 
@@ -415,23 +418,23 @@ Open `http://localhost:4200` for the live dashboard.
 ## Configuration reference
 
 <details>
-<summary><strong>Full WORKFLOW.md schema</strong></summary>
+<summary><strong>Full workflow.yaml schema</strong></summary>
 
 ```yaml
----
 tracker:
   kind: linear                          # only "linear" supported
   project_slug: "abc123def456"          # hex slugId from your Linear project URL
   api_key: "$LINEAR_API_KEY"            # env var reference, or omit (uses LINEAR_API_KEY)
-  active_states:                        # issues in these states are dispatched to agents
-    - Todo
-    - In Progress
-  terminal_states:                      # issues in these states stop any running agent
+
+linear_states:                          # maps logical names to your Linear state names
+  active: "In Progress"                 # agent is working
+  review: "Human Review"                # waiting for human at a gate
+  gate_approved: "Gate Approved"        # human approved — agent picks up next stage
+  rework: "Rework"                      # human requested changes
+  terminal:                             # issues in these states stop any running agent
     - Done
     - Cancelled
-    - Canceled
     - Closed
-    - Duplicate
 
 polling:
   interval_ms: 15000                    # how often to poll Linear (default: 30000)
@@ -449,6 +452,8 @@ hooks:
     npm test 2>&1 | tail -20
   before_remove: |                      # runs before workspace is deleted
     echo "cleaning up"
+  on_stage_enter: |                     # runs when an issue enters a new stage
+    echo "entering stage"
   timeout_ms: 120000                    # hook timeout in ms (default: 60000)
 
 claude:
@@ -474,14 +479,64 @@ agent:
   max_concurrent_agents_by_state:      # optional per-state concurrency limits
     in progress: 2
     rework: 1
----
 
-Your Jinja2 prompt template goes here.
-Available: {{ issue.identifier }}, {{ issue.title }}, {{ issue.description }},
-           {{ issue.state }}, {{ issue.labels }}, {{ issue.url }},
-           {{ issue.priority }}, {{ issue.branch_name }}, {{ attempt }},
-           {{ last_run_at }}
+prompts:
+  global_prompt: prompts/global.md     # loaded for every agent turn (optional)
+
+states:                                # the state machine pipeline
+  investigate:
+    type: agent
+    prompt: prompts/investigate.md     # Jinja2 template for this stage
+    linear_state: active
+    transitions:
+      done: review_investigation
+
+  review_investigation:
+    type: gate
+    linear_state: review
+    rework_to: investigate
+    max_rework: 3
+    transitions:
+      approve: implement
+
+  implement:
+    type: agent
+    prompt: prompts/implement.md
+    linear_state: active
+    session: new                       # fresh session (default: inherit)
+    transitions:
+      done: review_implementation
+
+  review_implementation:
+    type: gate
+    linear_state: review
+    rework_to: implement
+    max_rework: 3
+    transitions:
+      approve: code_review
+
+  code_review:
+    type: agent
+    prompt: prompts/code-review.md
+    linear_state: active
+    session: new
+    model: claude-opus-4-6            # per-state model override
+    transitions:
+      done: review_merge
+
+  review_merge:
+    type: gate
+    linear_state: review
+    rework_to: implement
+    transitions:
+      approve: done
+
+  done:
+    type: terminal
+    linear_state: terminal
 ```
+
+Each state can override `model`, `max_turns`, `turn_timeout_ms`, `stall_timeout_ms`, `permission_mode`, `allowed_tools`, and `hooks` from the root `claude` / `hooks` defaults.
 
 </details>
 
@@ -489,21 +544,30 @@ Available: {{ issue.identifier }}, {{ issue.title }}, {{ issue.description }},
 
 ## Prompt template variables
 
-The body of `WORKFLOW.md` is a [Jinja2](https://jinja.palletsprojects.com/) template. Every agent receives it rendered with:
+Agent prompts are assembled from three layers, each rendered as a [Jinja2](https://jinja.palletsprojects.com/) template:
+
+1. **Global prompt** (`prompts.global_prompt`) — shared context loaded for every agent turn
+2. **Stage prompt** (`states.<name>.prompt`) — stage-specific instructions (e.g. `prompts/investigate.md`)
+3. **Lifecycle injection** — auto-generated section with issue context, state transitions, rework comments, and recent activity
+
+All three layers receive the same template variables:
 
 | Variable | Description |
 |----------|-------------|
-| `{{ issue.identifier }}` | e.g. `ENG-42` |
-| `{{ issue.title }}` | Issue title |
-| `{{ issue.description }}` | Full issue description |
-| `{{ issue.state }}` | Current Linear state |
-| `{{ issue.priority }}` | `0` none · `1` urgent · `2` high · `3` medium · `4` low |
-| `{{ issue.labels }}` | List of label names (lowercase) |
-| `{{ issue.url }}` | Linear issue URL |
-| `{{ issue.branch_name }}` | Suggested git branch name |
-| `{{ issue.blocked_by }}` | List of `{id, identifier, state}` blockers |
-| `{{ attempt }}` | Retry attempt number (`None` on first run) |
-| `{{ last_run_at }}` | ISO 8601 timestamp of the last completed agent run for this issue (empty string on first run) — use to filter PR comments to only those added since the last run |
+| `{{ issue_identifier }}` | e.g. `ENG-42` |
+| `{{ issue_title }}` | Issue title |
+| `{{ issue_description }}` | Full issue description |
+| `{{ issue_state }}` | Current Linear state |
+| `{{ issue_priority }}` | `0` none · `1` urgent · `2` high · `3` medium · `4` low |
+| `{{ issue_labels }}` | List of label names (lowercase) |
+| `{{ issue_url }}` | Linear issue URL |
+| `{{ issue_branch }}` | Suggested git branch name |
+| `{{ state_name }}` | Current state machine state (e.g. `investigate`, `implement`) |
+| `{{ run }}` | Run number for this state (increments on rework) |
+| `{{ attempt }}` | Retry attempt within this run |
+| `{{ last_run_at }}` | ISO 8601 timestamp of the last completed agent run for this issue (empty string on first run) |
+
+The lifecycle section is appended automatically — you don't need to include it in your prompt files. It provides the agent with available transitions, rework feedback, and recent Linear comments.
 
 ---
 
@@ -611,13 +675,18 @@ This is formalised in OpenAI's [Harness Engineering](https://openai.com/index/ha
 ## Architecture
 
 ```
-WORKFLOW.md
-  ├── YAML front matter  →  ServiceConfig
-  └── Jinja2 body        →  prompt template
+workflow.yaml  →  ServiceConfig (states, linear_states, hooks, claude, etc.)
+prompts/       →  Jinja2 stage prompt files
+          │
+          ▼
+    Prompt Assembly (prompt.py)
+    ├── global prompt   →  shared context
+    ├── stage prompt    →  per-state instructions
+    └── lifecycle       →  auto-injected issue context
           │
           ▼
     Orchestrator  ──────────────────────▶  Linear GraphQL API
-    (asyncio loop)                         fetch candidates
+    (asyncio loop, state machine)          fetch candidates
           │                                reconcile state
           │  dispatch (bounded concurrency)
           ▼
@@ -640,10 +709,12 @@ WORKFLOW.md
 
 | File | Purpose |
 |------|---------|
-| `stokowski/config.py` | `WORKFLOW.md` parser, typed config dataclasses |
+| `stokowski/config.py` | `workflow.yaml` parser, typed config dataclasses, state machine validation |
+| `stokowski/prompt.py` | Three-layer prompt assembly (global + stage + lifecycle) |
+| `stokowski/tracking.py` | State machine tracking via structured Linear comments |
 | `stokowski/linear.py` | Linear GraphQL client (httpx async) |
 | `stokowski/models.py` | Domain models: `Issue`, `RunAttempt`, `RetryEntry` |
-| `stokowski/orchestrator.py` | Poll loop, dispatch, reconciliation, retry |
+| `stokowski/orchestrator.py` | Poll loop, state machine dispatch, reconciliation, retry |
 | `stokowski/runner.py` | Claude Code CLI integration, stream-json parser |
 | `stokowski/workspace.py` | Per-issue workspace lifecycle and hooks |
 | `stokowski/web.py` | Optional FastAPI dashboard |
@@ -653,7 +724,9 @@ WORKFLOW.md
 
 ## Upgrading
 
-Your personal config lives in `WORKFLOW.md` and `.env` — both gitignored, so upgrading will never touch them.
+Your personal config lives in `workflow.yaml`, `prompts/`, and `.env` — all gitignored, so upgrading will never touch them.
+
+> **Migrating from WORKFLOW.md?** The old `WORKFLOW.md` format (YAML front matter + Jinja2 body) is still parsed for backward compatibility, but `workflow.yaml` is the recommended format. Move your YAML config to `workflow.yaml`, split your prompt template into files under `prompts/`, and define your pipeline in the `states` section. See the [Configuration reference](#configuration-reference) for the full schema.
 
 **If you installed by cloning the repo:**
 
@@ -680,10 +753,10 @@ stokowski --dry-run
 pip install --upgrade git+https://github.com/Sugar-Coffee/stokowski.git#egg=stokowski[web]
 ```
 
-**After upgrading, check if `WORKFLOW.example.md` has changed** — new config fields may have been added that you'll want to adopt:
+**After upgrading, check if `workflow.example.yaml` has changed** — new config fields may have been added that you'll want to adopt:
 
 ```bash
-git diff HEAD@{1} WORKFLOW.example.md
+git diff HEAD@{1} workflow.example.yaml
 ```
 
 ---
