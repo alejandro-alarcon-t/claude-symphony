@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from jinja2 import BaseLoader, Environment
+from jinja2 import BaseLoader, Environment, Undefined
 
 from .config import LinearStatesConfig, ServiceConfig, StateConfig
 from .models import Issue
@@ -55,11 +55,8 @@ def render_template(template_str: str, context: dict[str, Any]) -> str:
     return template.render(**context)
 
 
-class _SilentUndefined:
+class _SilentUndefined(Undefined):
     """Jinja2 undefined that renders as empty string."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        pass
 
     def __str__(self) -> str:
         return ""
@@ -71,6 +68,8 @@ class _SilentUndefined:
         return False
 
     def __getattr__(self, name: str) -> _SilentUndefined:
+        if name.startswith("_"):
+            raise AttributeError(name)
         return _SilentUndefined()
 
     def __getitem__(self, name: str) -> _SilentUndefined:
