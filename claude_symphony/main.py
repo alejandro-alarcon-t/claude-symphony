@@ -1,4 +1,4 @@
-"""CLI entry point for Stokowski."""
+"""CLI entry point for Claude Symphony."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def setup_logging(verbose: bool = False):
 # ── Update check ───────────────────────────────────────────────────────────
 
 async def check_for_updates():
-    """Check if a newer Stokowski release is available on GitHub."""
+    """Check if a newer Claude Symphony release is available on GitHub."""
     global _update_message
     from . import __version__
 
@@ -71,7 +71,7 @@ async def check_for_updates():
         import httpx
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
-                "https://api.github.com/repos/Sugar-Coffee/stokowski/releases/latest",
+                "https://api.github.com/repos/alejandro-alarcon-t/claude-symphony/releases/latest",
                 headers={"Accept": "application/vnd.github+json"},
             )
             if resp.status_code != 200:
@@ -81,7 +81,7 @@ async def check_for_updates():
                 return
             if _parse_ver(latest_tag) > _parse_ver(__version__):
                 _update_message = (
-                    f"Stokowski {latest_tag} available (you have {__version__})"
+                    f"Claude Symphony {latest_tag} available (you have {__version__})"
                 )
     except Exception:
         pass  # Update checks are best-effort
@@ -90,7 +90,7 @@ async def check_for_updates():
 # ── Keyboard handler ────────────────────────────────────────────────────────
 
 HELP_TEXT = """
-[bold white]Stokowski keyboard shortcuts[/bold white]
+[bold white]Claude Symphony keyboard shortcuts[/bold white]
 
   [bold yellow]q[/bold yellow]   Quit — graceful shutdown, kills all agents
   [bold yellow]s[/bold yellow]   Status — show running agents and token usage
@@ -134,7 +134,7 @@ def print_status(orch: Orchestrator):
     console.print()
     console.print(Panel(
         table,
-        title=f"[bold]Stokowski Status[/bold]  "
+        title=f"[bold]Claude Symphony Status[/bold]  "
               f"[dim]running={running}  retrying={retrying}  "
               f"tokens={total_tok:,}  uptime={secs:.0f}s[/dim]",
         border_style="yellow",
@@ -250,13 +250,13 @@ async def run_orchestrator(workflow_path: str, port: int | None = None):
             console.print(f"[green]Web dashboard →[/green] http://127.0.0.1:{port}")
         except ImportError:
             console.print(
-                "[yellow]Install web extras for dashboard: pip install stokowski[web][/yellow]"
+                "[yellow]Install web extras for dashboard: pip install claude-symphony[web][/yellow]"
             )
 
     await check_for_updates()
 
     console.print(Panel(
-        f"[bold]Stokowski[/bold]  [dim]Claude Code Orchestrator[/dim]\n"
+        f"[bold]Claude Symphony[/bold]  [dim]Claude Code Orchestrator[/dim]\n"
         f"[dim]workflow:[/dim] {workflow_path}",
         border_style="dim",
     ))
@@ -292,14 +292,25 @@ async def run_orchestrator(workflow_path: str, port: int | None = None):
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def cli():
+    # Handle 'init' subcommand before argparse
+    if len(sys.argv) > 1 and sys.argv[1] == "init":
+        from .init import run_init
+        target = sys.argv[2] if len(sys.argv) > 2 else None
+        run_init(target)
+        return
+
     parser = argparse.ArgumentParser(
-        description="Stokowski - Orchestrate Claude Code agents from Linear issues"
+        description=(
+            "Claude Symphony - Orchestrate Claude Code"
+            " agents from Linear issues"
+        ),
     )
     parser.add_argument(
         "workflow",
         nargs="?",
         default=None,
-        help="Path to workflow.yaml or WORKFLOW.md (auto-detected if not specified)",
+        help="Path to workflow.yaml or WORKFLOW.md"
+        " (auto-detected if not specified)",
     )
     parser.add_argument(
         "--port", type=int, default=None,
@@ -311,7 +322,8 @@ def cli():
     )
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="Validate config and show candidates without dispatching",
+        help="Validate config and show candidates"
+        " without dispatching",
     )
 
     args = parser.parse_args()
@@ -326,7 +338,7 @@ def cli():
         else:
             console.print(
                 "[red]No workflow file found. Create workflow.yaml or WORKFLOW.md, "
-                "or specify a path: stokowski <path>[/red]"
+                "or specify a path: claude-symphony <path>[/red]"
             )
             sys.exit(1)
 

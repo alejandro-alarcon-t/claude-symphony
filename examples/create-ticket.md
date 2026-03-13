@@ -107,4 +107,4 @@ Show the user the complete description and ask for approval. Once approved:
 - Keep criteria atomic — one thing per criterion
 - Reference specific files and components when possible
 - If the user mentions something that should be a separate ticket, note it but keep this ticket focused
-- The acceptance criteria JSON block is machine-readable — Stokowski agents are instructed to verify each criterion before moving to Human Review
+- The acceptance criteria JSON block is machine-readable — Claude Symphony agents are instructed to verify each criterion before moving to Human Review

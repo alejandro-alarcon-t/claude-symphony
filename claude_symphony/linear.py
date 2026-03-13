@@ -7,26 +7,11 @@ from datetime import datetime
 
 import httpx
 
-from .models import BlockerRef, Issue
+from .models import BlockerRef, Issue, IssueRef
 
-logger = logging.getLogger("stokowski.linear")
+logger = logging.getLogger("claude_symphony.linear")
 
-CANDIDATE_QUERY = """
-query($projectSlug: String!, $states: [String!]!, $after: String) {
-  issues(
-    filter: {
-      project: { slugId: { eq: $projectSlug } }
-      state: { name: { in: $states } }
-    }
-    first: 50
-    after: $after
-    orderBy: createdAt
-  ) {
-    pageInfo {
-      hasNextPage
-      endCursor
-    }
-    nodes {
+_ISSUE_FIELDS = """
       id
       identifier
       title
@@ -38,6 +23,22 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
       updatedAt
       state { name }
       labels { nodes { name } }
+      parent {
+        id
+        identifier
+        title
+        state { name }
+        labels { nodes { name } }
+        children {
+          nodes {
+            id
+            identifier
+            title
+            state { name }
+            labels { nodes { name } }
+          }
+        }
+      }
       inverseRelations {
         nodes {
           type
@@ -48,6 +49,41 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
           }
         }
       }
+"""
+
+CANDIDATE_QUERY_BY_PROJECT = """
+query($projectSlug: String!, $states: [String!]!, $after: String) {
+  issues(
+    filter: {
+      project: { slugId: { eq: $projectSlug } }
+      state: { name: { in: $states } }
+    }
+    first: 50
+    after: $after
+    orderBy: createdAt
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+""" + _ISSUE_FIELDS + """
+    }
+  }
+}
+"""
+
+CANDIDATE_QUERY_BY_TEAM = """
+query($teamKey: String!, $states: [String!]!, $after: String) {
+  issues(
+    filter: {
+      team: { key: { eq: $teamKey } }
+      state: { name: { in: $states } }
+    }
+    first: 50
+    after: $after
+    orderBy: createdAt
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+""" + _ISSUE_FIELDS + """
     }
   }
 }
@@ -65,7 +101,7 @@ query($ids: [ID!]!) {
 }
 """
 
-ISSUES_BY_STATES_QUERY = """
+ISSUES_BY_STATES_BY_PROJECT = """
 query($projectSlug: String!, $states: [String!]!, $after: String) {
   issues(
     filter: {
@@ -75,15 +111,24 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
     first: 50
     after: $after
   ) {
-    pageInfo {
-      hasNextPage
-      endCursor
+    pageInfo { hasNextPage endCursor }
+    nodes { id identifier state { name } }
+  }
+}
+"""
+
+ISSUES_BY_STATES_BY_TEAM = """
+query($teamKey: String!, $states: [String!]!, $after: String) {
+  issues(
+    filter: {
+      team: { key: { eq: $teamKey } }
+      state: { name: { in: $states } }
     }
-    nodes {
-      id
-      identifier
-      state { name }
-    }
+    first: 50
+    after: $after
+  ) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id identifier state { name } }
   }
 }
 """
@@ -175,6 +220,43 @@ def _normalize_issue(node: dict) -> Issue:
         except (ValueError, TypeError):
             priority = None
 
+    # Parse parent (epic) and sibling sub-issues
+    parent_ref = None
+    siblings: list[IssueRef] = []
+    parent_node = node.get("parent")
+    if parent_node and parent_node.get("id"):
+        parent_labels = [
+            lbl["name"].lower()
+            for lbl in (parent_node.get("labels", {}) or {}).get("nodes", [])
+            if lbl.get("name")
+        ]
+        parent_ref = IssueRef(
+            id=parent_node["id"],
+            identifier=parent_node.get("identifier", ""),
+            title=parent_node.get("title", ""),
+            state=(parent_node.get("state") or {}).get("name", ""),
+            labels=parent_labels,
+        )
+        # Siblings = parent's children, excluding self
+        for child in (parent_node.get("children", {}) or {}).get("nodes", []):
+            if child.get("id") and child["id"] != node["id"]:
+                child_labels = [
+                    lbl["name"].lower()
+                    for lbl in (
+                        (child.get("labels", {}) or {}).get("nodes", [])
+                    )
+                    if lbl.get("name")
+                ]
+                siblings.append(
+                    IssueRef(
+                        id=child["id"],
+                        identifier=child.get("identifier", ""),
+                        title=child.get("title", ""),
+                        state=(child.get("state") or {}).get("name", ""),
+                        labels=child_labels,
+                    )
+                )
+
     return Issue(
         id=node["id"],
         identifier=node["identifier"],
@@ -188,14 +270,23 @@ def _normalize_issue(node: dict) -> Issue:
         blocked_by=blockers,
         created_at=_parse_datetime(node.get("createdAt")),
         updated_at=_parse_datetime(node.get("updatedAt")),
+        parent=parent_ref,
+        siblings=siblings,
     )
 
 
 class LinearClient:
-    def __init__(self, endpoint: str, api_key: str, timeout_ms: int = 30_000):
+    def __init__(
+        self,
+        endpoint: str,
+        api_key: str,
+        timeout_ms: int = 30_000,
+        team_key: str = "",
+    ):
         self.endpoint = endpoint
         self.api_key = api_key
         self.timeout = timeout_ms / 1000
+        self.team_key = team_key
         self._client = httpx.AsyncClient(
             headers={
                 "Authorization": self.api_key,
@@ -221,19 +312,23 @@ class LinearClient:
     async def fetch_candidate_issues(
         self, project_slug: str, active_states: list[str]
     ) -> list[Issue]:
-        """Fetch all issues in active states for the project."""
+        """Fetch all issues in active states for the project/team."""
         issues: list[Issue] = []
         cursor = None
 
+        if self.team_key:
+            query = CANDIDATE_QUERY_BY_TEAM
+            slug_var = {"teamKey": self.team_key}
+        else:
+            query = CANDIDATE_QUERY_BY_PROJECT
+            slug_var = {"projectSlug": project_slug}
+
         while True:
-            variables: dict = {
-                "projectSlug": project_slug,
-                "states": active_states,
-            }
+            variables: dict = {**slug_var, "states": active_states}
             if cursor:
                 variables["after"] = cursor
 
-            data = await self._graphql(CANDIDATE_QUERY, variables)
+            data = await self._graphql(query, variables)
             issues_data = data.get("issues", {})
             nodes = issues_data.get("nodes", [])
 
@@ -272,15 +367,19 @@ class LinearClient:
         issues: list[Issue] = []
         cursor = None
 
+        if self.team_key:
+            query = ISSUES_BY_STATES_BY_TEAM
+            slug_var = {"teamKey": self.team_key}
+        else:
+            query = ISSUES_BY_STATES_BY_PROJECT
+            slug_var = {"projectSlug": project_slug}
+
         while True:
-            variables: dict = {
-                "projectSlug": project_slug,
-                "states": states,
-            }
+            variables: dict = {**slug_var, "states": states}
             if cursor:
                 variables["after"] = cursor
 
-            data = await self._graphql(ISSUES_BY_STATES_QUERY, variables)
+            data = await self._graphql(query, variables)
             issues_data = data.get("issues", {})
             for node in issues_data.get("nodes", []):
                 if node and node.get("id"):

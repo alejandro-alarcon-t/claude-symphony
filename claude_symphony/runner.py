@@ -12,7 +12,7 @@ from typing import Any, Callable
 from .config import ClaudeConfig, HooksConfig
 from .models import Issue, RunAttempt
 
-logger = logging.getLogger("stokowski.runner")
+logger = logging.getLogger("claude_symphony.runner")
 
 # Callback type for events from the runner to the orchestrator
 EventCallback = Callable[[str, str, dict[str, Any]], None]
@@ -40,7 +40,7 @@ def build_claude_args(
 
     # Permission mode
     if claude_cfg.permission_mode == "auto":
-        args.append("--dangerously-skip-permissions")
+        args.extend(["--permission-mode", "auto"])
     elif claude_cfg.permission_mode == "allowedTools" and claude_cfg.allowed_tools:
         args.extend(["--allowedTools", ",".join(claude_cfg.allowed_tools)])
 
@@ -51,7 +51,7 @@ def build_claude_args(
     # System prompt - always include headless context, plus any user additions
     if not session_id:
         headless_context = (
-            "You are running in headless/unattended mode via Stokowski orchestrator. "
+            "You are running in headless/unattended mode via Claude Symphony orchestrator. "
             "Do NOT use interactive skills, slash commands, or the Skill tool. "
             "Do NOT invoke brainstorming, plan mode, or any interactive workflow. "
             "Work autonomously and directly on the task."
@@ -279,8 +279,10 @@ async def run_agent_turn(
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
         )
-        if on_pid and proc.pid:
-            on_pid(proc.pid, True)
+        if proc.pid:
+            attempt.pid = proc.pid
+            if on_pid:
+                on_pid(proc.pid, True)
     except FileNotFoundError:
         attempt.status = "failed"
         attempt.error = f"Claude command not found: {claude_cfg.command}"
@@ -386,8 +388,10 @@ async def run_agent_turn(
         )
 
     # Unregister PID
-    if on_pid and proc.pid:
-        on_pid(proc.pid, False)
+    if proc.pid:
+        attempt.pid = None
+        if on_pid:
+            on_pid(proc.pid, False)
 
     logger.info(
         f"Turn complete issue={issue.identifier} "

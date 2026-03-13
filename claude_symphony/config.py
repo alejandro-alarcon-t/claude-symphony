@@ -21,6 +21,7 @@ class TrackerConfig:
     endpoint: str = "https://api.linear.app/graphql"
     api_key: str = ""
     project_slug: str = ""
+    team_key: str = ""  # alternative to project_slug (e.g. "FIC")
 
 
 @dataclass
@@ -31,11 +32,19 @@ class PollingConfig:
 @dataclass
 class WorkspaceConfig:
     root: str = ""
+    mode: str = "clone"          # "clone" (default) or "worktree"
+    repo: str = ""               # path to main repo (for worktree mode)
+    base_ref: str = "origin/main"  # base reference for worktree branches
 
     def resolved_root(self) -> Path:
         if self.root:
             return Path(os.path.expandvars(os.path.expanduser(self.root)))
-        return Path(tempfile.gettempdir()) / "stokowski_workspaces"
+        return Path(tempfile.gettempdir()) / "claude_symphony_workspaces"
+
+    def resolved_repo(self) -> Path | None:
+        if self.repo:
+            return Path(os.path.expandvars(os.path.expanduser(self.repo))).resolve()
+        return None
 
 
 @dataclass
@@ -298,6 +307,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         endpoint=str(t.get("endpoint", "https://api.linear.app/graphql")),
         api_key=str(t.get("api_key", "")),
         project_slug=str(t.get("project_slug", "")),
+        team_key=str(t.get("team_key", "")),
     )
 
     # Parse polling
@@ -306,7 +316,12 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
 
     # Parse workspace
     w = config_raw.get("workspace", {}) or {}
-    workspace = WorkspaceConfig(root=str(w.get("root", "")))
+    workspace = WorkspaceConfig(
+        root=str(w.get("root", "")),
+        mode=str(w.get("mode", "clone")),
+        repo=str(w.get("repo", "")),
+        base_ref=str(w.get("base_ref", "origin/main")),
+    )
 
     # Parse hooks
     h = config_raw.get("hooks", {}) or {}
@@ -393,8 +408,10 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
         errors.append(f"Unsupported tracker kind: {cfg.tracker.kind}")
     if not cfg.resolved_api_key():
         errors.append("Missing tracker API key (set LINEAR_API_KEY or tracker.api_key)")
-    if not cfg.tracker.project_slug:
-        errors.append("Missing tracker.project_slug")
+    if not cfg.tracker.project_slug and not cfg.tracker.team_key:
+        errors.append(
+            "Missing tracker.project_slug or tracker.team_key"
+        )
 
     if not cfg.states:
         errors.append("No states defined")

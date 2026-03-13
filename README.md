@@ -1,6 +1,6 @@
 <div align="center">
 
-# Stokowski
+# Claude Symphony
 
 **Autonomous coding agents, orchestrated by Linear issues.**
 
@@ -12,7 +12,7 @@ A Python implementation of the [OpenAI Symphony](https://github.com/openai/symph
 [![Linear](https://img.shields.io/badge/Linear-integrated-5E6AD2?logo=linear&logoColor=white)](https://linear.app)
 [![Symphony Spec](https://img.shields.io/badge/spec-Symphony-black?logo=openai&logoColor=white)](https://github.com/openai/symphony)
 
-*Named after Leopold Stokowski — the conductor who brought orchestral music to the masses.*
+*Originally named Stokowski after Leopold Stokowski — the conductor who brought orchestral music to the masses.*
 
 </div>
 
@@ -24,10 +24,10 @@ A Python implementation of the [OpenAI Symphony](https://github.com/openai/symph
 - [How is this different from Emdash?](#how-is-this-different-from-emdash)
 - [What is it?](#what-is-it)
 - [Features](#features)
-- [What Stokowski adds beyond Symphony](#what-stokowski-adds-beyond-symphony)
+- [What Claude Symphony adds beyond Symphony](#what-claude-symphony-adds-beyond-symphony)
 - [Setup guide](#setup-guide)
   - [1. Install prerequisites](#1-install-prerequisites)
-  - [2. Install Stokowski](#2-install-stokowski)
+  - [2. Install Claude Symphony](#2-install-claude-symphony)
   - [3. Get your Linear API key](#3-get-your-linear-api-key)
   - [4. Configure your environment](#4-configure-your-environment)
   - [5. Set up Linear workflow states](#5-set-up-linear-workflow-states)
@@ -38,7 +38,7 @@ A Python implementation of the [OpenAI Symphony](https://github.com/openai/symph
 - [Prompt template variables](#prompt-template-variables)
 - [MCP servers](#mcp-servers)
 - [Writing good tickets for agents](#writing-good-tickets-for-agents)
-- [Getting the most out of Stokowski](#getting-the-most-out-of-stokowski)
+- [Getting the most out of Claude Symphony](#getting-the-most-out-of-claude-symphony)
 - [Architecture](#architecture)
 - [Upgrading](#upgrading)
 - [Security](#security)
@@ -49,11 +49,11 @@ A Python implementation of the [OpenAI Symphony](https://github.com/openai/symph
 
 ## What it actually does
 
-You write a ticket in Linear. You move it to **Todo**. That's it — Stokowski handles everything else:
+You write a ticket in Linear. You move it to **Todo**. That's it — Claude Symphony handles everything else:
 
 ```mermaid
 flowchart TD
-    A([You move ticket to Todo]) --> B["Stokowski picks it up<br/>clones repo into isolated workspace"]
+    A([You move ticket to Todo]) --> B["Claude Symphony picks it up<br/>clones repo into isolated workspace"]
     B --> C["Agent investigates the issue<br/>reads codebase, posts findings"]
     C --> D([You review the investigation])
     D -->|approved| E["Agent implements the solution<br/>writes code, runs tests, opens PR"]
@@ -79,11 +79,11 @@ Each agent runs in its own isolated git clone — multiple tickets can be worked
 
 When you work interactively with Claude Code in your repo, you rely on `CLAUDE.md` and your project's rule files to guide Claude's behaviour. The problem with putting your autonomous agent instructions in `CLAUDE.md` is that they bleed into your regular Claude Code sessions — your day-to-day interactive work now carries all the "you are running headlessly, never ask a human, follow this state machine" instructions that only make sense for an unattended agent.
 
-Stokowski solves this with `workflow.yaml` and a `prompts/` directory. Your autonomous agent prompt — how to handle Linear states, what quality gates to run, how to structure PRs, what to do when blocked — lives entirely in your workflow config and is only injected into headless agent sessions. Your `CLAUDE.md` stays clean for interactive use.
+Claude Symphony solves this with `workflow.yaml` and a `prompts/` directory. Your autonomous agent prompt — how to handle Linear states, what quality gates to run, how to structure PRs, what to do when blocked — lives entirely in your workflow config and is only injected into headless agent sessions. Your `CLAUDE.md` stays clean for interactive use.
 
 ```
 Interactive session:    Claude reads CLAUDE.md              ← your normal instructions
-Stokowski agent:        Claude reads CLAUDE.md               ← same conventions
+Claude Symphony agent:        Claude reads CLAUDE.md               ← same conventions
                               +  workflow.yaml config        ← state machine + dispatch
                               +  prompts/ stage files        ← agent-only instructions
 ```
@@ -92,7 +92,7 @@ This separation lets you build a genuinely autonomous pipeline without compromis
 
 **Other differences:**
 
-| | Stokowski | Emdash |
+| | Claude Symphony | Emdash |
 |---|---|---|
 | Agent runners | Claude Code + Codex — mix providers per state in the same pipeline | Claude Code only |
 | Agent instructions | Separate `workflow.yaml` + `prompts/` — doesn't affect interactive sessions | Applied via project rules, shared with interactive context |
@@ -106,7 +106,7 @@ This separation lets you build a genuinely autonomous pipeline without compromis
 
 **When to choose Emdash:** You want a polished managed product, don't want to run infrastructure, and your workflow fits their model.
 
-**When to choose Stokowski:** You want full control over the agent prompt and workflow, need the interactive/autonomous context separation, want to mix Claude Code and Codex in the same pipeline, have specialised MCP tooling (Figma, iOS, etc.), or want to run quality gates on every turn.
+**When to choose Claude Symphony:** You want full control over the agent prompt and workflow, need the interactive/autonomous context separation, want to mix Claude Code and Codex in the same pipeline, have specialised MCP tooling (Figma, iOS, etc.), or want to run quality gates on every turn.
 
 ---
 
@@ -114,7 +114,7 @@ This separation lets you build a genuinely autonomous pipeline without compromis
 
 [Symphony](https://github.com/openai/symphony) is OpenAI's open specification for autonomous coding agent orchestration: poll a tracker for issues, create isolated workspaces, run agents, manage multi-turn sessions, retry failures, and reconcile state. It ships with a Codex/Elixir reference implementation.
 
-**Stokowski implements the same spec with multi-runner support.** Point it at your Linear project and git repo, and agents autonomously pick up issues, write code, run tests, open PRs, and move tickets through your workflow — all while you do other things.
+**Claude Symphony implements the same spec with multi-runner support.** Point it at your Linear project and git repo, and agents autonomously pick up issues, write code, run tests, open PRs, and move tickets through your workflow — all while you do other things.
 
 Different states in the same pipeline can use different runners and models. Use Claude Code Opus for investigation, Sonnet for implementation, Codex for a second opinion on code review — all in the same run, configured per-state in `workflow.yaml`.
 
@@ -124,7 +124,7 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 
 ### How it maps to Symphony
 
-| Symphony | Stokowski |
+| Symphony | Claude Symphony |
 |----------|-----------|
 | `codex app-server` JSON-RPC | `claude -p --output-format stream-json` or `codex --quiet` |
 | `thread/start` → thread_id | First turn → `session_id` |
@@ -152,9 +152,9 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 
 ---
 
-## What Stokowski adds beyond Symphony
+## What Claude Symphony adds beyond Symphony
 
-Beyond porting to Claude Code + Python, Stokowski ships several improvements over the reference implementation:
+Beyond porting to Claude Code + Python, Claude Symphony ships several improvements over the reference implementation:
 
 <details>
 <summary><strong>Terminal experience</strong></summary>
@@ -200,7 +200,7 @@ Beyond porting to Claude Code + Python, Stokowski ships several improvements ove
 
 ## Setup guide
 
-> **Follow these steps in order.** Each one is required before Stokowski will work.
+> **Follow these steps in order.** Each one is required before Claude Symphony will work.
 
 ### 1. Install prerequisites
 
@@ -263,18 +263,18 @@ Not set up? [GitHub SSH key guide →](https://docs.github.com/en/authentication
 
 ---
 
-### 2. Install Stokowski
+### 2. Install Claude Symphony
 
 ```bash
-git clone https://github.com/Sugar-Coffee/stokowski
-cd stokowski
+git clone https://github.com/alejandro-alarcon-t/claude-symphony
+cd claude-symphony
 
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
 pip install -e ".[web]"     # installs core + web dashboard
 
-stokowski --help             # verify it's working
+claude-symphony --help             # verify it's working
 ```
 
 ---
@@ -283,7 +283,7 @@ stokowski --help             # verify it's working
 
 1. Open Linear → click your avatar (bottom-left) → **Settings**
 2. Go to **Security & access** → **Personal API keys**
-3. Click **Create key**, name it `stokowski`, and copy the value
+3. Click **Create key**, name it `claude-symphony`, and copy the value
 
 ---
 
@@ -305,7 +305,7 @@ LINEAR_API_KEY=lin_api_your_key_here
 
 ### 5. Set up Linear workflow states
 
-Stokowski uses a specific set of states to manage the agent ↔ human handoff. Linear includes basic states by default; you'll need to add a few custom ones.
+Claude Symphony uses a specific set of states to manage the agent ↔ human handoff. Linear includes basic states by default; you'll need to add a few custom ones.
 
 **Recommended states:**
 
@@ -380,7 +380,7 @@ hooks:
 
 ```bash
 source .venv/bin/activate   # if not already active
-stokowski --dry-run
+claude-symphony --dry-run
 ```
 
 This connects to Linear, validates your config, and lists candidate issues — **without dispatching any agents**.
@@ -400,10 +400,10 @@ This connects to Linear, validates your config, and lists candidate issues — *
 
 ```bash
 # Terminal only
-stokowski
+claude-symphony
 
 # With web dashboard
-stokowski --port 4200
+claude-symphony --port 4200
 ```
 
 Open `http://localhost:4200` for the live dashboard.
@@ -444,7 +444,7 @@ polling:
   interval_ms: 15000                    # how often to poll Linear (default: 30000)
 
 workspace:
-  root: ~/code/stokowski-workspaces     # where per-issue directories are created
+  root: ~/code/claude-symphony-workspaces     # where per-issue directories are created
 
 hooks:
   after_create: |                       # runs once when a new workspace is created
@@ -548,7 +548,7 @@ states:                                # the state machine pipeline
 
 ### State types
 
-| Type | Has prompt | What Stokowski does |
+| Type | Has prompt | What Claude Symphony does |
 |------|-----------|---------------------|
 | `agent` (default) | Yes | Dispatches a runner (Claude Code or Codex), runs turns, follows `transitions.complete` on success |
 | `gate` | No | Moves issue to review Linear state, waits for human. Follows `transitions.approve` on Gate Approved, `rework_to` on Rework |
@@ -673,7 +673,7 @@ The best way to write a well-structured ticket is to let Claude Code help you. T
 
 ```bash
 mkdir -p .claude/commands
-cp /path/to/stokowski/examples/create-ticket.md .claude/commands/create-ticket.md
+cp /path/to/claude-symphony/examples/create-ticket.md .claude/commands/create-ticket.md
 ```
 
 Then in Claude Code, run:
@@ -686,7 +686,7 @@ Claude will ask for your Linear ticket identifier, interview you about what need
 
 ---
 
-## Getting the most out of Stokowski
+## Getting the most out of Claude Symphony
 
 Autonomous agents work best when the codebase they operate in is highly self-describing. The more an agent can read about conventions, known pitfalls, and expectations — the less it has to guess, and the better the output.
 
@@ -742,16 +742,16 @@ prompts/       →  Jinja2 stage prompt files
 
 | File | Purpose |
 |------|---------|
-| `stokowski/config.py` | `workflow.yaml` parser, typed config dataclasses, state machine validation |
-| `stokowski/prompt.py` | Three-layer prompt assembly (global + stage + lifecycle) |
-| `stokowski/tracking.py` | State machine tracking via structured Linear comments |
-| `stokowski/linear.py` | Linear GraphQL client (httpx async) |
-| `stokowski/models.py` | Domain models: `Issue`, `RunAttempt`, `RetryEntry` |
-| `stokowski/orchestrator.py` | Poll loop, state machine dispatch, reconciliation, retry |
-| `stokowski/runner.py` | Multi-runner CLI integration (Claude Code + Codex), stream-json parser |
-| `stokowski/workspace.py` | Per-issue workspace lifecycle and hooks |
-| `stokowski/web.py` | Optional FastAPI dashboard |
-| `stokowski/main.py` | CLI entry point, keyboard handler |
+| `claude-symphony/config.py` | `workflow.yaml` parser, typed config dataclasses, state machine validation |
+| `claude-symphony/prompt.py` | Three-layer prompt assembly (global + stage + lifecycle) |
+| `claude-symphony/tracking.py` | State machine tracking via structured Linear comments |
+| `claude-symphony/linear.py` | Linear GraphQL client (httpx async) |
+| `claude-symphony/models.py` | Domain models: `Issue`, `RunAttempt`, `RetryEntry` |
+| `claude-symphony/orchestrator.py` | Poll loop, state machine dispatch, reconciliation, retry |
+| `claude-symphony/runner.py` | Multi-runner CLI integration (Claude Code + Codex), stream-json parser |
+| `claude-symphony/workspace.py` | Per-issue workspace lifecycle and hooks |
+| `claude-symphony/web.py` | Optional FastAPI dashboard |
+| `claude-symphony/main.py` | CLI entry point, keyboard handler |
 
 ---
 
@@ -764,7 +764,7 @@ Your personal config lives in `workflow.yaml`, `prompts/`, and `.env` — all gi
 **If you installed by cloning the repo:**
 
 ```bash
-cd stokowski
+cd claude-symphony
 
 # Upgrade to the latest stable release
 git fetch --tags
@@ -775,7 +775,7 @@ source .venv/bin/activate
 pip install -e ".[web]"
 
 # Verify everything still works
-stokowski --dry-run
+claude-symphony --dry-run
 ```
 
 > **Note:** `git pull origin main` will work but may include unreleased commits ahead of the latest tag — treat that as nightly if you go that route.
@@ -783,7 +783,7 @@ stokowski --dry-run
 **If you installed via pip** *(PyPI coming soon):*
 
 ```bash
-pip install --upgrade git+https://github.com/Sugar-Coffee/stokowski.git#egg=stokowski[web]
+pip install --upgrade git+https://github.com/alejandro-alarcon-t/claude-symphony.git#egg=claude-symphony[web]
 ```
 
 **After upgrading, check if `workflow.example.yaml` has changed** — new config fields may have been added that you'll want to adopt:
@@ -811,6 +811,6 @@ git diff HEAD@{1} workflow.example.yaml
 
 ## Credits
 
-- [OpenAI Symphony](https://github.com/openai/symphony) — the spec and architecture Stokowski implements
+- [OpenAI Symphony](https://github.com/openai/symphony) — the spec and architecture Claude Symphony implements
 - [Anthropic Claude Code](https://claude.ai/claude-code) — agent runtime
 - [OpenAI Codex](https://openai.com/index/introducing-codex/) — agent runtime

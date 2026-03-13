@@ -8,10 +8,10 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-logger = logging.getLogger("stokowski.tracking")
+logger = logging.getLogger("claude_symphony.tracking")
 
-STATE_PATTERN = re.compile(r"<!-- stokowski:state ({.*?}) -->")
-GATE_PATTERN = re.compile(r"<!-- stokowski:gate ({.*?}) -->")
+STATE_PATTERN = re.compile(r"<!-- claude-symphony:state ({.*?}) -->")
+GATE_PATTERN = re.compile(r"<!-- claude-symphony:gate ({.*?}) -->")
 
 
 def make_state_comment(state: str, run: int = 1) -> str:
@@ -21,8 +21,8 @@ def make_state_comment(state: str, run: int = 1) -> str:
         "run": run,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    machine = f"<!-- stokowski:state {json.dumps(payload)} -->"
-    human = f"**[Stokowski]** Entering state: **{state}** (run {run})"
+    machine = f"<!-- claude-symphony:state {json.dumps(payload)} -->"
+    human = f"**[Claude Symphony]** Entering state: **{state}** (run {run})"
     return f"{machine}\n\n{human}"
 
 
@@ -43,28 +43,28 @@ def make_gate_comment(
     if rework_to:
         payload["rework_to"] = rework_to
 
-    machine = f"<!-- stokowski:gate {json.dumps(payload)} -->"
+    machine = f"<!-- claude-symphony:gate {json.dumps(payload)} -->"
 
     if status == "waiting":
-        human = f"**[Stokowski]** Awaiting human review: **{state}**"
+        human = f"**[Claude Symphony]** Awaiting human review: **{state}**"
         if prompt:
             human += f" — {prompt}"
     elif status == "approved":
-        human = f"**[Stokowski]** Gate **{state}** approved."
+        human = f"**[Claude Symphony]** Gate **{state}** approved."
     elif status == "rework":
         human = (
-            f"**[Stokowski]** Rework requested at **{state}**. "
+            f"**[Claude Symphony]** Rework requested at **{state}**. "
             f"Returning to: **{rework_to}**"
         )
         if run > 1:
             human += f" (run {run})"
     elif status == "escalated":
         human = (
-            f"**[Stokowski]** Max rework exceeded at **{state}**. "
+            f"**[Claude Symphony]** Max rework exceeded at **{state}**. "
             f"Escalating for human intervention."
         )
     else:
-        human = f"**[Stokowski]** Gate **{state}** status: {status}"
+        human = f"**[Claude Symphony]** Gate **{state}** status: {status}"
 
     return f"{machine}\n\n{human}"
 
@@ -129,7 +129,7 @@ def get_comments_since(
 ) -> list[dict]:
     """Filter comments to only those after a given timestamp.
 
-    Returns comments that are NOT stokowski tracking comments and
+    Returns comments that are NOT claude-symphony tracking comments and
     were created after the given timestamp.
     """
     result = []
@@ -144,7 +144,7 @@ def get_comments_since(
 
     for comment in comments:
         body = comment.get("body", "")
-        if "<!-- stokowski:" in body:
+        if "<!-- claude-symphony:" in body:
             continue
 
         if since_dt:

@@ -14,6 +14,16 @@ class BlockerRef:
 
 
 @dataclass
+class IssueRef:
+    """Lightweight reference to a related issue (parent or sibling)."""
+    id: str
+    identifier: str = ""
+    title: str = ""
+    state: str = ""
+    labels: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Issue:
     id: str
     identifier: str
@@ -27,6 +37,8 @@ class Issue:
     blocked_by: list[BlockerRef] = field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    parent: IssueRef | None = None
+    siblings: list[IssueRef] = field(default_factory=list)
 
 
 @dataclass
@@ -37,6 +49,7 @@ class RunAttempt:
     workspace_path: str = ""
     started_at: datetime | None = None
     status: str = "pending"
+    pid: int | None = None
     session_id: str | None = None
     error: str | None = None
     input_tokens: int = 0

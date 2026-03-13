@@ -1,9 +1,9 @@
 # =============================================================================
-# Stokowski — Example State Machine Workflow
+# Claude Symphony — Example State Machine Workflow
 # =============================================================================
 #
 # Copy this file to workflow.yaml and customise for your project.
-# Stokowski re-reads this file on every poll tick — changes take effect
+# Claude Symphony re-reads this file on every poll tick — changes take effect
 # without restart.
 #
 # Prompt files live in the prompts/ directory.  Each agent state references
@@ -18,7 +18,7 @@
 #   terminal      → list of done/closed states
 #
 # State types:
-#   agent    — Stokowski dispatches Claude Code in this state
+#   agent    — Claude Symphony dispatches Claude Code in this state
 #   gate     — pauses for human review; approve → next, rework → rework_to
 #   terminal — issue is finished; workspace cleaned up
 # =============================================================================
@@ -28,7 +28,9 @@
 # ---------------------------------------------------------------------------
 tracker:
   kind: linear
+  # Use ONE of: project_slug (hex slugId) or team_key (e.g. "FIC")
   project_slug: "abc123def456"    # hex slugId from your Linear project URL
+  # team_key: "FIC"               # alternative: filter by team key
   # api_key: $LINEAR_API_KEY      # or set LINEAR_API_KEY in .env / environment
 
 # ---------------------------------------------------------------------------
@@ -56,7 +58,10 @@ polling:
 # Workspace
 # ---------------------------------------------------------------------------
 workspace:
-  root: ~/code/stokowski-workspaces
+  root: ~/code/claude-symphony-workspaces
+  # mode: worktree                # "clone" (default) or "worktree"
+  # repo: ~/code/your-repo        # path to main repo (worktree mode)
+  # base_ref: origin/main         # base reference for worktree branches
 
 # ---------------------------------------------------------------------------
 # Hooks — shell scripts run in the workspace directory

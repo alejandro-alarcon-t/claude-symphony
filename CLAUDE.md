@@ -1,4 +1,4 @@
-# Stokowski
+# Claude Symphony
 
 Claude Code adaptation of [OpenAI's Symphony](https://github.com/openai/symphony). Orchestrates Claude Code agents via Linear issues.
 
@@ -8,7 +8,7 @@ This file is the single source of truth for contributors. It covers architecture
 
 ## What it does
 
-Stokowski is a long-running Python daemon that:
+Claude Symphony is a long-running Python daemon that:
 1. Polls Linear for issues in configured active states
 2. Creates an isolated git-cloned workspace per issue
 3. Launches Claude Code (`claude -p`) in that workspace
@@ -24,10 +24,11 @@ The agent prompt, runtime config, and workspace setup all live in `workflow.yaml
 ## Package structure
 
 ```
-stokowski/
+claude_symphony/
   config.py        workflow.yaml parser + typed config dataclasses
+  init.py          `claude-symphony init` scaffolding command
   linear.py        Linear GraphQL client (httpx async)
-  models.py        Domain models: Issue, RunAttempt, RetryEntry
+  models.py        Domain models: Issue, IssueRef, RunAttempt, RetryEntry
   orchestrator.py  Main poll loop, dispatch, reconciliation, retry
   prompt.py        Three-layer prompt assembly for state machine workflows
   runner.py        Claude Code CLI integration, stream-json parser
@@ -35,7 +36,7 @@ stokowski/
   workspace.py     Per-issue workspace lifecycle and hooks
   web.py           Optional FastAPI dashboard
   main.py          CLI entry point, keyboard handler
-  __main__.py      Enables python -m stokowski
+  __main__.py      Enables python -m claude_symphony
 ```
 
 ---
@@ -43,7 +44,7 @@ stokowski/
 ## Key design decisions
 
 ### Claude Code CLI instead of Codex app-server
-Symphony uses Codex's JSON-RPC `app-server` protocol over stdio. Stokowski uses Claude Code's CLI:
+Symphony uses Codex's JSON-RPC `app-server` protocol over stdio. Claude Symphony uses Claude Code's CLI:
 - First turn: `claude -p "<prompt>" --output-format stream-json --verbose`
 - Continuation: `claude -p "<prompt>" --resume <session_id> --output-format stream-json --verbose`
 
@@ -56,7 +57,7 @@ Simpler operational story — single process, no BEAM runtime, no distributed co
 All state lives in memory. The orchestrator recovers from restart by re-polling Linear and re-discovering active issues. Workspace directories on disk act as durable state.
 
 ### workflow.yaml as the operator contract
-The operator's `workflow.yaml` defines the runtime config and state machine. Stokowski re-parses it on every poll tick — config changes take effect without restart. Both `.yaml` and legacy `.md` (YAML front matter + Jinja2 body) formats are supported. Prompt templates are now separate `.md` files referenced by path from the config.
+The operator's `workflow.yaml` defines the runtime config and state machine. Claude Symphony re-parses it on every poll tick — config changes take effect without restart. Both `.yaml` and legacy `.md` (YAML front matter + Jinja2 body) formats are supported. Prompt templates are now separate `.md` files referenced by path from the config.
 
 ### State machine workflow
 Each workflow defines a set of internal states that map to Linear states. States have types: `agent` (runs Claude Code), `gate` (waits for human review), or `terminal` (issue complete). Transitions between states are declared explicitly in config.
@@ -66,9 +67,9 @@ Each workflow defines a set of internal states that map to Linear states. States
 2. **Stage prompt** — state-specific instructions loaded from the state's `prompt` path
 3. **Lifecycle injection** — auto-generated section with issue metadata, transitions, rework context, and recent comments
 
-**Gate protocol:** When an agent completes a state that transitions to a gate, Stokowski moves the issue to the gate's Linear state and posts a structured tracking comment. Humans approve or request rework via Linear state changes. On approval, Stokowski advances to the gate's `approve` transition target. On rework, it returns to the gate's `rework_to` state.
+**Gate protocol:** When an agent completes a state that transitions to a gate, Claude Symphony moves the issue to the gate's Linear state and posts a structured tracking comment. Humans approve or request rework via Linear state changes. On approval, Claude Symphony advances to the gate's `approve` transition target. On rework, it returns to the gate's `rework_to` state.
 
-**Structured comment tracking:** State transitions and gate decisions are persisted as HTML comments on Linear issues (`<!-- stokowski:state {...} -->` and `<!-- stokowski:gate {...} -->`). These enable crash recovery and provide context for rework runs.
+**Structured comment tracking:** State transitions and gate decisions are persisted as HTML comments on Linear issues (`<!-- claude-symphony:state {...} -->` and `<!-- claude-symphony:gate {...} -->`). These enable crash recovery and provide context for rework runs.
 
 ### Workspace isolation
 Each issue gets its own directory under `workspace.root`. Agents run with `cwd` set to that directory. Workspaces persist across turns for the same session; they're deleted when the issue reaches a terminal state.
@@ -82,7 +83,7 @@ Every first-turn launch appends a system prompt via `--append-system-prompt` tha
 
 ### config.py
 Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasses:
-- `TrackerConfig` — Linear endpoint, API key, project slug
+- `TrackerConfig` — Linear endpoint, API key, project slug or team key
 - `PollingConfig` — interval
 - `WorkspaceConfig` — root path (supports `~` and `$VAR` expansion)
 - `HooksConfig` — shell scripts for lifecycle events + timeout (includes `on_stage_enter`)
@@ -107,16 +108,19 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 3. `LINEAR_API_KEY` env var as fallback
 
 ### linear.py
-Async GraphQL client over httpx. Three queries:
-- `fetch_candidate_issues()` — paginated, fetches all issues in active states with full detail (labels, blockers, branch name)
+Async GraphQL client over httpx. Supports two filtering modes: `project_slug` (hex slugId) or `team_key` (e.g. "FIC"). Three queries:
+- `fetch_candidate_issues()` — paginated, fetches all issues in active states with full detail (labels, blockers, branch name, parent/sibling context)
 - `fetch_issue_states_by_ids()` — lightweight reconciliation query, returns `{id: state_name}`
 - `fetch_issues_by_states()` — used on startup cleanup, returns minimal Issue objects
+
+Parent/epic context: the candidate query fetches `parent { id, identifier, title, state, labels, children { ... } }` for each issue. Siblings are computed as parent's children excluding self. This data is surfaced as `Issue.parent: IssueRef | None` and `Issue.siblings: list[IssueRef]`.
 
 Note: the reconciliation query uses `issues(filter: { id: { in: $ids } })` — not `nodes(ids:)` which doesn't exist in Linear's API.
 
 ### models.py
-Three dataclasses:
-- `Issue` — normalized Linear issue. `title` is required even for minimal fetches (use `title=""`).
+Four dataclasses:
+- `IssueRef` — lightweight reference to a related issue (parent or sibling): id, identifier, title, state, labels
+- `Issue` — normalized Linear issue. `title` is required even for minimal fetches (use `title=""`). Has `parent: IssueRef | None` and `siblings: list[IssueRef]` for epic context.
 - `RunAttempt` — per-issue runtime state: session_id, turn count, token usage, status, last message
 - `RetryEntry` — retry queue entry with due time and error
 
@@ -183,7 +187,7 @@ CLI entry point (`cli()`) and keyboard handler.
 
 **`_make_footer()`** builds the Rich `Text` status line shown at bottom of terminal via `Live`.
 
-**`check_for_updates()`** hits the GitHub releases API (`/repos/Sugar-Coffee/stokowski/releases/latest`) via httpx, compares the latest tag against the installed `__version__`, and sets `_update_message` if a newer version exists. Best-effort — all exceptions are silently swallowed.
+**`check_for_updates()`** hits the GitHub releases API (`/repos/alejandro-alarcon-t/claude-symphony/releases/latest`) via httpx, compares the latest tag against the installed `__version__`, and sets `_update_message` if a newer version exists. Best-effort — all exceptions are silently swallowed.
 
 **`_force_kill_children()`** uses `pgrep -f "claude.*-p.*--output-format.*stream-json"` as a last-resort cleanup on `KeyboardInterrupt`.
 
@@ -204,7 +208,7 @@ Three-layer prompt assembly for state machine workflows. Main entry point is `as
 
 ### tracking.py
 State machine tracking via structured Linear comments:
-- `make_state_comment(state, run)` — builds state entry comment with hidden JSON (`<!-- stokowski:state {...} -->`) + human-readable text
+- `make_state_comment(state, run)` — builds state entry comment with hidden JSON (`<!-- claude-symphony:state {...} -->`) + human-readable text
 - `make_gate_comment(state, status, prompt, rework_to, run)` — builds gate status comment (waiting/approved/rework/escalated)
 - `parse_latest_tracking(comments)` — scans comments (oldest-first) to find latest state or gate tracking entry for crash recovery
 - `get_last_tracking_timestamp(comments)` — finds the timestamp of the latest tracking comment
@@ -232,7 +236,7 @@ workflow.yaml parsed → states + config loaded
                 → retry or continuation scheduled
 ```
 
-The agent itself handles: moving Linear state, posting comments, creating branches, opening PRs via `gh pr create`, linking PR to issue. Stokowski doesn't do any of that — it's the scheduler, not the agent.
+The agent itself handles: moving Linear state, posting comments, creating branches, opening PRs via `gh pr create`, linking PR to issue. Claude Symphony doesn't do any of that — it's the scheduler, not the agent.
 
 ---
 
@@ -257,13 +261,13 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[web]"
 
 # Validate config without dispatching agents
-stokowski --dry-run
+claude-symphony --dry-run
 
 # Run with verbose logging
-stokowski -v
+claude-symphony -v
 
 # Run with web dashboard
-stokowski --port 4200
+claude-symphony --port 4200
 ```
 
 There are no automated tests beyond `--dry-run`. The system is best verified by running against a real Linear project with a test ticket.

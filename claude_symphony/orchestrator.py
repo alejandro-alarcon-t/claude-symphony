@@ -26,11 +26,12 @@ from .config import (
 from .linear import LinearClient
 from .models import Issue, RetryEntry, RunAttempt
 from .prompt import assemble_prompt
+from .events import EventBuffer, classify_event
 from .runner import run_agent_turn, run_turn
 from .tracking import make_gate_comment, make_state_comment, parse_latest_tracking
 from .workspace import ensure_workspace, remove_workspace
 
-logger = logging.getLogger("stokowski")
+logger = logging.getLogger("claude_symphony")
 
 
 class Orchestrator:
@@ -54,7 +55,8 @@ class Orchestrator:
         self._linear: LinearClient | None = None
         self._tasks: dict[str, asyncio.Task] = {}
         self._retry_timers: dict[str, asyncio.TimerHandle] = {}
-        self._child_pids: set[int] = set()  # Track claude subprocess PIDs
+        self._child_pid_map: dict[int, str] = {}  # pid -> issue_id
+        self._event_buffer: EventBuffer = EventBuffer(max_events=200)
         self._last_session_ids: dict[str, str] = {}  # issue_id -> last known session_id
         self._jinja = Environment(undefined=StrictUndefined)
         self._running = False
@@ -84,6 +86,7 @@ class Orchestrator:
             self._linear = LinearClient(
                 endpoint=self.cfg.tracker.endpoint,
                 api_key=self.cfg.resolved_api_key(),
+                team_key=self.cfg.tracker.team_key,
             )
         return self._linear
 
@@ -96,7 +99,7 @@ class Orchestrator:
             raise RuntimeError(f"Startup validation failed: {errors}")
 
         logger.info(
-            f"Starting Stokowski "
+            f"Starting Claude Symphony "
             f"project={self.cfg.tracker.project_slug} "
             f"max_agents={self.cfg.agent.max_concurrent_agents} "
             f"poll_ms={self.cfg.polling.interval_ms}"
@@ -132,7 +135,7 @@ class Orchestrator:
             self._stop_event.set()
 
         # Kill all child claude processes first
-        for pid in list(self._child_pids):
+        for pid in list(self._child_pid_map):
             try:
                 os.killpg(os.getpgid(pid), signal.SIGKILL)
             except (ProcessLookupError, PermissionError, OSError):
@@ -140,7 +143,7 @@ class Orchestrator:
                     os.kill(pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError, OSError):
                     pass
-        self._child_pids.clear()
+        self._child_pid_map.clear()
 
         # Cancel async tasks
         for issue_id, task in list(self._tasks.items()):
@@ -163,7 +166,10 @@ class Orchestrator:
             )
             ws_root = self.cfg.workspace.resolved_root()
             for issue in terminal:
-                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks)
+                await remove_workspace(
+                    ws_root, issue.identifier,
+                    self.cfg.hooks, self.cfg.workspace,
+                )
             if terminal:
                 logger.info(f"Cleaned {len(terminal)} terminal workspaces")
         except Exception as e:
@@ -317,7 +323,10 @@ class Orchestrator:
             # Clean up workspace
             try:
                 ws_root = self.cfg.workspace.resolved_root()
-                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks)
+                await remove_workspace(
+                    ws_root, issue.identifier,
+                    self.cfg.hooks, self.cfg.workspace,
+                )
             except Exception as e:
                 logger.warning(f"Failed to remove workspace for {issue.identifier}: {e}")
             # Clean up tracking state
@@ -637,7 +646,10 @@ class Orchestrator:
                 runner_type = state_cfg.runner
 
             ws_root = self.cfg.workspace.resolved_root()
-            ws = await ensure_workspace(ws_root, issue.identifier, self.cfg.hooks)
+            ws = await ensure_workspace(
+                ws_root, issue.identifier,
+                self.cfg.hooks, self.cfg.workspace,
+            )
             attempt.workspace_path = str(ws.path)
 
             # Post state tracking comment (only for first dispatch of a state)
@@ -704,7 +716,7 @@ class Orchestrator:
                     issue=issue,
                     attempt=attempt,
                     on_event=self._on_agent_event,
-                    on_pid=self._on_child_pid,
+                    on_pid=lambda pid, reg, _iid=issue.id: self._on_child_pid(pid, reg, _iid),
                 )
 
                 if attempt.status != "succeeded":
@@ -818,16 +830,97 @@ class Orchestrator:
         except TemplateSyntaxError as e:
             raise RuntimeError(f"Template syntax error: {e}")
 
-    def _on_child_pid(self, pid: int, is_register: bool):
+    async def pause_agent(self, issue_id: str) -> bool:
+        """Pause a running agent by sending SIGSTOP to its process group."""
+        attempt = self.running.get(issue_id)
+        if not attempt or attempt.status != "streaming":
+            return False
+        for pid, iid in list(self._child_pid_map.items()):
+            if iid == issue_id:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGSTOP)
+                    attempt.status = "paused"
+                    logger.info(f"Paused agent issue_id={issue_id} pid={pid}")
+                    return True
+                except (ProcessLookupError, PermissionError, OSError) as e:
+                    logger.warning(f"Failed to pause pid={pid}: {e}")
+        return False
+
+    async def resume_agent(self, issue_id: str) -> bool:
+        """Resume a paused agent by sending SIGCONT."""
+        attempt = self.running.get(issue_id)
+        if not attempt or attempt.status != "paused":
+            return False
+        for pid, iid in list(self._child_pid_map.items()):
+            if iid == issue_id:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGCONT)
+                    attempt.status = "streaming"
+                    logger.info(f"Resumed agent issue_id={issue_id} pid={pid}")
+                    return True
+                except (ProcessLookupError, PermissionError, OSError) as e:
+                    logger.warning(f"Failed to resume pid={pid}: {e}")
+        return False
+
+    async def stop_agent(self, issue_id: str) -> bool:
+        """Stop a running or retrying agent."""
+        task = self._tasks.get(issue_id)
+        if task:
+            task.cancel()
+        for pid, iid in list(self._child_pid_map.items()):
+            if iid == issue_id:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        pass
+                self._child_pid_map.pop(pid, None)
+        self.running.pop(issue_id, None)
+        self._tasks.pop(issue_id, None)
+        self.claimed.discard(issue_id)
+        if issue_id in self.retry_attempts:
+            self.retry_attempts.pop(issue_id, None)
+        if issue_id in self._retry_timers:
+            self._retry_timers[issue_id].cancel()
+            self._retry_timers.pop(issue_id, None)
+        logger.info(f"Stopped agent issue_id={issue_id}")
+        return True
+
+    def get_events(self, issue_id: str, limit: int = 50) -> list[dict]:
+        """Get recent events for an issue as serializable dicts."""
+        events = self._event_buffer.get(issue_id, limit)
+        return [
+            {
+                "timestamp": e.timestamp.isoformat(),
+                "event_type": e.event_type,
+                "summary": e.summary,
+                "detail": e.detail,
+                "tool_name": e.tool_name,
+            }
+            for e in events
+        ]
+
+    def _on_child_pid(self, pid: int, is_register: bool, issue_id: str | None = None):
         """Track child claude process PIDs for cleanup on shutdown."""
         if is_register:
-            self._child_pids.add(pid)
+            self._child_pid_map[pid] = issue_id or ""
         else:
-            self._child_pids.discard(pid)
+            self._child_pid_map.pop(pid, None)
 
     def _on_agent_event(self, identifier: str, event_type: str, event: dict):
-        """Callback for agent events."""
+        """Callback for agent events - classifies and buffers for dashboard."""
         logger.debug(f"Agent event issue={identifier} type={event_type}")
+        agent_event = classify_event(event)
+        if agent_event:
+            issue_id = None
+            for iid, r in self.running.items():
+                if r.issue_identifier == identifier:
+                    issue_id = iid
+                    break
+            if issue_id:
+                self._event_buffer.push(issue_id, agent_event)
 
     def _on_worker_exit(self, issue: Issue, attempt: RunAttempt):
         """Handle worker completion."""
@@ -995,7 +1088,8 @@ class Orchestrator:
                 if attempt:
                     ws_root = self.cfg.workspace.resolved_root()
                     await remove_workspace(
-                        ws_root, attempt.issue_identifier, self.cfg.hooks
+                        ws_root, attempt.issue_identifier,
+                        self.cfg.hooks, self.cfg.workspace,
                     )
 
                 self.running.pop(issue_id, None)
@@ -1057,6 +1151,12 @@ class Orchestrator:
                         "total_tokens": r.total_tokens,
                     },
                     "state_name": r.state_name,
+                    "issue_title": self._last_issues.get(r.issue_id, Issue(id="", identifier="", title="")).title,
+                    "issue_url": self._last_issues.get(r.issue_id, Issue(id="", identifier="", title="")).url,
+                    "issue_labels": self._last_issues.get(r.issue_id, Issue(id="", identifier="", title="")).labels,
+                    "event_count": self._event_buffer.count(r.issue_id),
+                    "pid": r.pid,
+                    "workspace_path": r.workspace_path,
                 }
                 for r in self.running.values()
             ],
@@ -1075,6 +1175,8 @@ class Orchestrator:
                     "issue_identifier": self._last_issues.get(issue_id, Issue(id="", identifier=issue_id, title="")).identifier,
                     "gate_state": gate_state,
                     "run": self._issue_state_runs.get(issue_id, 1),
+                    "issue_title": self._last_issues.get(issue_id, Issue(id="", identifier=issue_id, title="")).title,
+                    "issue_url": self._last_issues.get(issue_id, Issue(id="", identifier=issue_id, title="")).url,
                 }
                 for issue_id, gate_state in self._pending_gates.items()
             ],

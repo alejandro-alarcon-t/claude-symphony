@@ -1,10 +1,25 @@
 # Changelog
 
-All notable changes to Stokowski are documented here.
+All notable changes to Claude Symphony are documented here.
 
 ---
 
-## [Unreleased]
+## [0.2.0] - 2026-03-13
+
+### Added
+
+- `claude-symphony init [path]` scaffolds `workflow.yaml` + `prompts/`
+- Git worktree workspace mode (`workspace.mode: worktree`)
+- Parent/epic context in Linear queries (`Issue.parent`, `Issue.siblings`)
+- Team key filtering (`tracker.team_key`) as alternative to project slug
+- `IssueRef` model for parent/sibling references
+
+### Changed
+
+- Renamed from Stokowski to Claude Symphony (v0.2.0)
+- Permission mode: `--permission-mode auto`
+- Tracking markers: `claude-symphony:state` / `claude-symphony:gate`
+- `ensure_workspace()`/`remove_workspace()` accept `WorkspaceConfig`
 
 ---
 
@@ -30,5 +45,6 @@ All notable changes to Stokowski are documented here.
 
 ---
 
-[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.1.0
+[Unreleased]: https://github.com/alejandro-alarcon-t/claude-symphony/compare/v0.2.0...HEAD
+[0.1.0]: https://github.com/alejandro-alarcon-t/claude-symphony/releases/tag/v0.1.0
+[0.2.0]: https://github.com/alejandro-alarcon-t/claude-symphony/compare/v0.1.0...v0.2.0
